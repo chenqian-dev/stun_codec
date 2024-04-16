@@ -14,8 +14,9 @@ use bytecodec::{
     TryTaggedDecode,
 };
 use byteorder::{BigEndian, ByteOrder};
-use crc::crc32;
-use hmacsha1::hmac_sha1;
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::vec;
 
@@ -59,6 +60,7 @@ macro_rules! impl_encode {
                 track!(self.0.encode(buf, eos))
             }
 
+            #[allow(clippy::redundant_closure_call)]
             fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
                 track!(self.0.start_encoding($map_from(item)))
             }
@@ -251,7 +253,7 @@ impl Fingerprint {
         let mut bytes = track!(MessageEncoder::default().encode_into_bytes(message.clone()))?;
         let final_len = bytes.len() as u16 - 20 + 8; // Adds `Fingerprint` attribute length
         BigEndian::write_u16(&mut bytes[2..4], final_len);
-        let crc32 = crc32::checksum_ieee(&bytes[..]) ^ 0x5354_554e;
+        let crc32 = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&bytes[..]) ^ 0x5354_554e;
         Ok(Fingerprint { crc32 })
     }
 
@@ -374,6 +376,19 @@ impl MessageIntegrity {
     /// The codepoint of the type of the attribute.
     pub const CODEPOINT: u16 = 0x0008;
 
+    /// utility function for creating HMAC-SHA1 signatures
+    fn generate_hmac_token(key: &[u8], message: &[u8]) -> [u8; 20] {
+        // Create the hasher with the key. We can use expect for Hmac algorithms as they allow arbitrary key sizes.
+        let mut hasher: Hmac<Sha1> =
+            Mac::new_from_slice(key).expect("HMAC algoritms can take keys of any size");
+
+        // hash the message
+        hasher.update(message);
+
+        // finalize the hash and convert to a static array
+        hasher.finalize().into_bytes().into()
+    }
+
     /// Makes a new `MessageIntegrity` instance for short-term credentials.
     pub fn new_short_term_credential<A>(message: &Message<A>, password: &str) -> Result<Self>
     where
@@ -381,7 +396,7 @@ impl MessageIntegrity {
     {
         let key = password.as_bytes();
         let preceding_message_bytes = track!(Self::message_into_bytes(message.clone()))?;
-        let hmac_sha1 = hmac_sha1(key, &preceding_message_bytes);
+        let hmac_sha1 = Self::generate_hmac_token(key, &preceding_message_bytes);
         Ok(MessageIntegrity {
             hmac_sha1,
             preceding_message_bytes,
@@ -401,7 +416,7 @@ impl MessageIntegrity {
         let key =
             md5::compute(format!("{}:{}:{}", username.name(), realm.text(), password).as_bytes());
         let preceding_message_bytes = track!(Self::message_into_bytes(message.clone()))?;
-        let hmac_sha1 = hmac_sha1(&key.0[..], &preceding_message_bytes);
+        let hmac_sha1 = Self::generate_hmac_token(&key.0[..], &preceding_message_bytes);
         Ok(MessageIntegrity {
             hmac_sha1,
             preceding_message_bytes,
@@ -414,7 +429,7 @@ impl MessageIntegrity {
         password: &str,
     ) -> std::result::Result<(), ErrorCode> {
         let key = password.as_bytes();
-        let expected = hmac_sha1(key, &self.preceding_message_bytes);
+        let expected = Self::generate_hmac_token(key, &self.preceding_message_bytes);
         if self.hmac_sha1 == expected {
             Ok(())
         } else {
@@ -431,7 +446,7 @@ impl MessageIntegrity {
     ) -> std::result::Result<(), ErrorCode> {
         let key =
             md5::compute(format!("{}:{}:{}", username.name(), realm.text(), password).as_bytes());
-        let expected = hmac_sha1(&key.0[..], &self.preceding_message_bytes);
+        let expected = Self::generate_hmac_token(&key.0[..], &self.preceding_message_bytes);
         if self.hmac_sha1 == expected {
             Ok(())
         } else {
@@ -633,7 +648,7 @@ impl_encode!(RealmEncoder, Realm, |item: Self::Item| item.text);
 /// [RFC 5389 -- 15.10. SOFTWARE]: https://tools.ietf.org/html/rfc5389#section-15.10
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Software {
-    description: String,
+    description: Cow<'static, str>,
 }
 impl Software {
     /// The codepoint of the type of the attribute.
@@ -647,7 +662,26 @@ impl Software {
     /// If it is too long, this will return an `ErrorKind::InvalidInput` error.
     pub fn new(description: String) -> Result<Self> {
         track_assert!(description.chars().count() < 128, ErrorKind::InvalidInput; description);
-        Ok(Software { description })
+        Ok(Software {
+            description: description.into(),
+        })
+    }
+
+    /// Makes a new `Software` instance from a static string.
+    ///
+    /// This function is const, so you can create this in a const context.
+    ///
+    /// # Panics
+    ///
+    /// The length of `description` must be less than `128` characters.
+    /// Panics if the string is longer.
+    pub const fn new_static(description: &'static str) -> Self {
+        if description.len() >= 128 {
+            panic!("Description for `Software` cannot be longer than 128 characters.");
+        }
+        Self {
+            description: Cow::Borrowed(description),
+        }
     }
 
     /// Returns the description of this instance.
@@ -677,7 +711,7 @@ impl_decode!(SoftwareDecoder, Software, Software::new);
 
 /// [`Software`] encoder.
 #[derive(Debug, Default)]
-pub struct SoftwareEncoder(Utf8Encoder);
+pub struct SoftwareEncoder(Utf8Encoder<Cow<'static, str>>);
 impl SoftwareEncoder {
     /// Makes a new `SoftwareEncoder` instance.
     pub fn new() -> Self {

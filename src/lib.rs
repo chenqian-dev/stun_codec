@@ -11,8 +11,8 @@
 //!
 //! # fn main() -> bytecodec::Result<()> {
 //! // Creates a message
-//! let mut message = Message::new(MessageClass::Request, BINDING, TransactionId::new([3; 12]));
-//! message.add_attribute(Attribute::Software(Software::new("foo".to_owned())?));
+//! let mut message = Message::<Attribute>::new(MessageClass::Request, BINDING, TransactionId::new([3; 12]));
+//! message.add_attribute(Software::new("foo".to_owned())?);
 //!
 //! // Encodes the message
 //! let mut encoder = MessageEncoder::new();
@@ -73,13 +73,15 @@
 //! - [RFC 5769 - Test Vectors for Session Traversal Utilities for NAT (STUN)][RFC 5769]
 //! - [RFC 5245 - Interactive Connectivity Establishment (ICE)][RFC 5245]
 //! - [RFC 5780 - NAT Behavior Discovery Using Session Traversal Utilities for NAT][RFC 5780]
-//! - [RFC 3489 - Simple Traversal of User Datagram Protocol Through Network Address Translators][RFC 3489]
+//! - [RFC 8016 - Mobility with Traversal Using Relays around NAT (TURN)][RFC 8016]
+//! - [RFC 8656 - Traversal Using Relays around NAT (TURN): Relay Extensions to Session Traversal Utilities for NAT (STUN)][RFC 8656]
 //!
 //! [RFC 5389]: https://tools.ietf.org/html/rfc5389
 //! [RFC 5769]: https://tools.ietf.org/html/rfc5769
 //! [RFC 5245]: https://tools.ietf.org/html/rfc5245
 //! [RFC 5780]: https://tools.ietf.org/html/rfc5780
-//! [RFC 3489]: https://datatracker.ietf.org/doc/html/rfc3489
+//! [RFC 8016]: https://tools.ietf.org/html/rfc8016
+//! [RFC 8656]: https://tools.ietf.org/html/rfc8656
 #![warn(missing_docs)]
 
 #[macro_use]
@@ -105,7 +107,6 @@ pub mod rfc5245;
 pub mod rfc5389;
 pub mod rfc5766;
 pub mod rfc5780;
-pub mod rfc3489;
 
 mod attribute;
 mod constants;
@@ -134,7 +135,7 @@ mod tests {
     #[test]
     fn it_works() -> Result<(), MainError> {
         let mut message = Message::new(MessageClass::Request, BINDING, TransactionId::new([3; 12]));
-        message.add_attribute(Attribute::Software(Software::new("foo".to_owned())?));
+        message.add_attribute(Software::new("foo".to_owned())?);
 
         let mut encoder = MessageEncoder::new();
         let bytes = encoder.encode_into_bytes(message.clone())?;
@@ -281,11 +282,11 @@ mod tests {
         assert_eq!(encoder.encode_into_bytes(message.clone())?, &input[..]);
 
         // TEST: `MessageIntegrity`
-        let uesrname = get_attr!(message, Username);
+        let username = get_attr!(message, Username);
         let realm = get_attr!(message, Realm);
         let password = "TheMatrIX"; // TODO: Test before SASLprep version
         get_attr!(message, MessageIntegrity)
-            .check_long_term_credential(&uesrname, &realm, password)
+            .check_long_term_credential(username, realm, password)
             .unwrap();
 
         Ok(())

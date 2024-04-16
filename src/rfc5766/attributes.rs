@@ -11,6 +11,7 @@ use bytecodec::fixnum::{
 };
 use bytecodec::null::{NullDecoder, NullEncoder};
 use bytecodec::{ByteCount, Decode, Encode, Eos, ErrorKind, Result, SizedEncode, TryTaggedDecode};
+use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -54,6 +55,7 @@ macro_rules! impl_encode {
                 track!(self.0.encode(buf, eos))
             }
 
+            #[allow(clippy::redundant_closure_call)]
             fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
                 track!(self.0.start_encoding($map_from(item)))
             }
@@ -89,7 +91,7 @@ impl ChannelNumber {
     pub const MIN: u16 = 0x4000;
 
     /// Maximum channel number.
-    pub const MAX: u16 = 0x7FFF;
+    pub const MAX: u16 = 0x4FFF;
 
     /// Makes a new `ChannelNumber` instance.
     ///
@@ -134,6 +136,12 @@ impl Attribute for ChannelNumber {
 
     fn get_type(&self) -> AttributeType {
         AttributeType::new(Self::CODEPOINT)
+    }
+}
+
+impl fmt::Display for ChannelNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -642,3 +650,17 @@ impl_encode!(
     ReservationToken,
     |item: Self::Item| item.0
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_byte_of_channel_number_is_in_range() {
+        let range = 64..=79;
+
+        // As per <https://www.rfc-editor.org/rfc/rfc8656#name-channels-2>.
+        assert!(range.contains(&ChannelNumber::MIN.to_be_bytes()[0]));
+        assert!(range.contains(&ChannelNumber::MAX.to_be_bytes()[0]));
+    }
+}

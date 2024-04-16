@@ -8,7 +8,7 @@ use bytecodec::bytes::{BytesEncoder, CopyableBytesDecoder};
 use bytecodec::combinator::{Collect, Length, Peekable, PreEncode, Repeat};
 use bytecodec::fixnum::{U16beDecoder, U16beEncoder, U32beDecoder, U32beEncoder};
 use bytecodec::{ByteCount, Decode, Encode, Eos, Error, ErrorKind, Result, SizedEncode};
-use std::vec;
+use std::{fmt, vec};
 use trackable::error::ErrorKindExt;
 
 /// Message decoded by [`MessageDecoder`].
@@ -31,6 +31,17 @@ impl MessageClass {
             0b10 => Some(MessageClass::SuccessResponse),
             0b11 => Some(MessageClass::ErrorResponse),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Display for MessageClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MessageClass::Request => write!(f, "request"),
+            MessageClass::Indication => write!(f, "indication"),
+            MessageClass::SuccessResponse => write!(f, "success response"),
+            MessageClass::ErrorResponse => write!(f, "error response"),
         }
     }
 }
@@ -213,8 +224,9 @@ impl<A: Attribute> Message<A> {
     }
 
     /// Adds the given attribute to the tail of the attributes in the message.
-    pub fn add_attribute(&mut self, attribute: A) {
-        self.attributes.push(LosslessAttribute::new(attribute));
+    pub fn add_attribute(&mut self, attribute: impl Into<A>) {
+        self.attributes
+            .push(LosslessAttribute::new(attribute.into()));
     }
 }
 
@@ -398,17 +410,13 @@ impl<A: Attribute> MessageDecoder<A> {
         let attributes_len = message.attributes.len();
         for i in 0..attributes_len {
             unsafe {
-                message.attributes.set_len(i);
                 let message_mut = &mut *(&mut message as *mut Message<A>);
                 let attr = message_mut.attributes.get_unchecked_mut(i);
-                if let Err(e) = track!(attr.after_decode(&message)) {
-                    message.attributes.set_len(attributes_len);
-                    return Err(e);
-                }
+                message.attributes.set_len(i);
+                let decode_result = track!(attr.after_decode(&message));
+                message.attributes.set_len(attributes_len);
+                decode_result?;
             }
-        }
-        unsafe {
-            message.attributes.set_len(attributes_len);
         }
         Ok(message)
     }
@@ -503,17 +511,13 @@ impl<A: Attribute> Encode for MessageEncoder<A> {
         let attributes_len = item.attributes.len();
         for i in 0..attributes_len {
             unsafe {
-                item.attributes.set_len(i);
                 let item_mut = &mut *(&mut item as *mut Message<A>);
                 let attr = item_mut.attributes.get_unchecked_mut(i);
-                if let Err(e) = track!(attr.before_encode(&item)) {
-                    item.attributes.set_len(attributes_len);
-                    return Err(e);
-                }
+                item.attributes.set_len(i);
+                let encode_result = track!(attr.before_encode(&item));
+                item.attributes.set_len(attributes_len);
+                encode_result?;
             }
-        }
-        unsafe {
-            item.attributes.set_len(attributes_len);
         }
 
         let message_type = Type {
