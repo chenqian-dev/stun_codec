@@ -1,5 +1,5 @@
 [package]
-name = "stun_codec_blazh"
+name = "stun_codec"
 version = "0.1.13"
 authors = ["blazh <blazh@163.com>"]
 description = "fork from stun_codec"
